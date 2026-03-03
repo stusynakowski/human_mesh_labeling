@@ -953,7 +953,7 @@ def main():
         with sel_col1:
             st.subheader("🔍 Vertex Lookup")
             vert_input = st.text_input(
-                "Enter vertex indices (comma-separated)",
+                "Set selection (comma-separated)",
                 placeholder="e.g. 0, 100, 5000, 12345",
                 key="vert_input",
             )
@@ -967,6 +967,40 @@ def main():
                     st.session_state.selected_verts = new_verts
                 except ValueError:
                     st.error("Please enter valid comma-separated integers.")
+
+            add_col, rm_col = st.columns(2)
+            with add_col:
+                add_input = st.text_input(
+                    "➕ Add vertices",
+                    placeholder="e.g. 42, 99",
+                    key="add_vert_input",
+                )
+                if add_input.strip():
+                    try:
+                        to_add = {
+                            int(v.strip())
+                            for v in add_input.split(",")
+                            if v.strip().lstrip("-").isdigit()
+                        }
+                        st.session_state.selected_verts = st.session_state.selected_verts | to_add
+                    except ValueError:
+                        pass
+            with rm_col:
+                rm_input = st.text_input(
+                    "➖ Remove vertices",
+                    placeholder="e.g. 42, 99",
+                    key="rm_vert_input",
+                )
+                if rm_input.strip():
+                    try:
+                        to_rm = {
+                            int(v.strip())
+                            for v in rm_input.split(",")
+                            if v.strip().lstrip("-").isdigit()
+                        }
+                        st.session_state.selected_verts = st.session_state.selected_verts - to_rm
+                    except ValueError:
+                        pass
 
         with sel_col2:
             st.subheader("🔺 Triangle Lookup")
@@ -1007,15 +1041,17 @@ def main():
         with mode_col1:
             interaction_mode = st.radio(
                 "Interaction mode",
-                ["🔄 Navigate", "🎯 Select"],
+                ["🔄 Navigate", "🎯 Select", "✏️ Toggle"],
                 index=0,
                 horizontal=True,
                 help=(
                     "**Navigate** – drag to rotate, scroll to zoom, shift-drag to pan.\n\n"
-                    "**Select** – box/lasso select vertices in the 3D view."
+                    "**Select** – box/lasso to *add* vertices to the selection.\n\n"
+                    "**Toggle** – box/lasso to *toggle* vertices (adds unselected, removes already-selected)."
                 ),
             )
         select_mode = interaction_mode.startswith("🎯")
+        toggle_mode = interaction_mode.startswith("✏️")
 
     # ------------------------------------------------------------------
     # 3D plot + 2D UV map side-by-side
@@ -1048,7 +1084,7 @@ def main():
             # In Navigate mode we do NOT pass on_select so Plotly keeps its native
             # turntable-rotate / pan / zoom interactions.  In Select mode we enable
             # on_select so the user can box-select or lasso vertices.
-            if select_mode:
+            if select_mode or toggle_mode:
                 selected_point = st.plotly_chart(
                     fig,
                     use_container_width=True,
@@ -1089,7 +1125,7 @@ def main():
                     on_select="rerun",
                 )
 
-    # Process selection from 3D plot (only in Select mode)
+    # Process selection from 3D plot (Select or Toggle mode)
     if selected_point and selected_point.selection and selected_point.selection.points:
         points = selected_point.selection.points
         clicked_verts = set()
@@ -1101,7 +1137,11 @@ def main():
                 # vertices trace
                 clicked_verts.add(pt["point_number"])
         if clicked_verts:
-            st.session_state.selected_verts = st.session_state.selected_verts | clicked_verts
+            if toggle_mode:
+                # Symmetric difference: add unselected, remove already-selected
+                st.session_state.selected_verts = st.session_state.selected_verts ^ clicked_verts
+            else:
+                st.session_state.selected_verts = st.session_state.selected_verts | clicked_verts
 
     # Process selection from 2D UV plot → map back to mesh vertices
     if uv_selected_point and uv_selected_point.selection and uv_selected_point.selection.points:
@@ -1114,7 +1154,10 @@ def main():
                 if mesh_vi >= 0:
                     uv_clicked_mesh_verts.add(mesh_vi)
         if uv_clicked_mesh_verts:
-            st.session_state.selected_verts = st.session_state.selected_verts | uv_clicked_mesh_verts
+            if toggle_mode:
+                st.session_state.selected_verts = st.session_state.selected_verts ^ uv_clicked_mesh_verts
+            else:
+                st.session_state.selected_verts = st.session_state.selected_verts | uv_clicked_mesh_verts
 
     # ------------------------------------------------------------------
     # Selected-region sub-mesh visualization (3D + UV side-by-side)
