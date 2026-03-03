@@ -132,12 +132,12 @@ ALL_PARAM_NAMES = [
 PRESET_POSES = {
     "T-Pose (Default)": {},
     "Arms Down": {
-        "r_uparm_rz": -1.2,
-        "l_uparm_rz": 1.2,
-    },
-    "Arms Forward": {
         "r_uparm_ry": -1.2,
         "l_uparm_ry": -1.2,
+    },
+    "Arms Forward": {
+        "r_uparm_rz": 1.2,
+        "l_uparm_rz": 1.2,
     },
     "Squat": {
         "r_knee_bend": 1.0,
@@ -159,12 +159,98 @@ PRESET_POSES = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Body-region grouping  (joint index → human-readable region label)
+# Each of the 127 skeleton joints is mapped to one of ~18 body regions.
+# ---------------------------------------------------------------------------
+JOINT_TO_REGION = {
+    # Root / Hips
+    0: "Hips", 1: "Hips",
+    # Left leg
+    2: "Left Upper Leg", 13: "Left Upper Leg", 14: "Left Upper Leg",
+    15: "Left Upper Leg", 16: "Left Upper Leg", 17: "Left Upper Leg",
+    3: "Left Lower Leg", 9: "Left Lower Leg", 10: "Left Lower Leg",
+    11: "Left Lower Leg", 12: "Left Lower Leg",
+    4: "Left Foot", 5: "Left Foot", 6: "Left Foot",
+    7: "Left Foot", 8: "Left Foot",
+    # Right leg
+    18: "Right Upper Leg", 29: "Right Upper Leg", 30: "Right Upper Leg",
+    31: "Right Upper Leg", 32: "Right Upper Leg", 33: "Right Upper Leg",
+    19: "Right Lower Leg", 25: "Right Lower Leg", 26: "Right Lower Leg",
+    27: "Right Lower Leg", 28: "Right Lower Leg",
+    20: "Right Foot", 21: "Right Foot", 22: "Right Foot",
+    23: "Right Foot", 24: "Right Foot",
+    # Spine / Torso
+    34: "Torso", 35: "Torso", 36: "Torso", 37: "Torso",
+    # Right arm
+    38: "Right Shoulder",
+    39: "Right Upper Arm", 69: "Right Upper Arm", 70: "Right Upper Arm",
+    71: "Right Upper Arm", 72: "Right Upper Arm", 73: "Right Upper Arm",
+    40: "Right Lower Arm", 41: "Right Lower Arm",
+    65: "Right Lower Arm", 66: "Right Lower Arm",
+    67: "Right Lower Arm", 68: "Right Lower Arm",
+    42: "Right Hand",
+    43: "Right Hand", 44: "Right Hand", 45: "Right Hand", 46: "Right Hand", 47: "Right Hand",
+    48: "Right Hand", 49: "Right Hand", 50: "Right Hand", 51: "Right Hand",
+    52: "Right Hand", 53: "Right Hand", 54: "Right Hand", 55: "Right Hand",
+    56: "Right Hand", 57: "Right Hand", 58: "Right Hand", 59: "Right Hand",
+    60: "Right Hand", 61: "Right Hand", 62: "Right Hand", 63: "Right Hand", 64: "Right Hand",
+    # Left arm
+    74: "Left Shoulder",
+    75: "Left Upper Arm", 105: "Left Upper Arm", 106: "Left Upper Arm",
+    107: "Left Upper Arm", 108: "Left Upper Arm", 109: "Left Upper Arm",
+    76: "Left Lower Arm", 77: "Left Lower Arm",
+    101: "Left Lower Arm", 102: "Left Lower Arm",
+    103: "Left Lower Arm", 104: "Left Lower Arm",
+    78: "Left Hand",
+    79: "Left Hand", 80: "Left Hand", 81: "Left Hand", 82: "Left Hand", 83: "Left Hand",
+    84: "Left Hand", 85: "Left Hand", 86: "Left Hand", 87: "Left Hand",
+    88: "Left Hand", 89: "Left Hand", 90: "Left Hand", 91: "Left Hand",
+    92: "Left Hand", 93: "Left Hand", 94: "Left Hand", 95: "Left Hand",
+    96: "Left Hand", 97: "Left Hand", 98: "Left Hand", 99: "Left Hand", 100: "Left Hand",
+    # Neck & Head
+    110: "Neck", 111: "Neck", 112: "Neck",
+    113: "Head", 126: "Head",
+    114: "Jaw", 115: "Jaw", 116: "Jaw",
+    117: "Jaw", 118: "Jaw", 119: "Jaw", 120: "Jaw", 121: "Jaw",
+    122: "Right Eye", 123: "Right Eye",
+    124: "Left Eye", 125: "Left Eye",
+}
+
+# Distinct colours for each body region (CSS rgba strings)
+REGION_COLORS = {
+    "Hips":             "#e6194b",
+    "Torso":            "#3cb44b",
+    "Left Upper Leg":   "#ffe119",
+    "Left Lower Leg":   "#f58231",
+    "Left Foot":        "#911eb4",
+    "Right Upper Leg":  "#42d4f4",
+    "Right Lower Leg":  "#f032e6",
+    "Right Foot":       "#bfef45",
+    "Left Shoulder":    "#fabed4",
+    "Left Upper Arm":   "#469990",
+    "Left Lower Arm":   "#dcbeff",
+    "Left Hand":        "#9a6324",
+    "Right Shoulder":   "#fffac8",
+    "Right Upper Arm":  "#800000",
+    "Right Lower Arm":  "#aaffc3",
+    "Right Hand":       "#808000",
+    "Neck":             "#ffd8b1",
+    "Head":             "#000075",
+    "Jaw":              "#a9a9a9",
+    "Right Eye":        "#ffffff",
+    "Left Eye":         "#e6beff",
+}
+
+ALL_REGIONS = list(REGION_COLORS.keys())
+
+
 # ===================================================================
 # Model loading (cached so it only loads once per session)
 # ===================================================================
 @st.cache_resource(show_spinner="Loading MHR model …")
 def load_model():
-    """Load the TorchScript model and mesh topology."""
+    """Load the TorchScript model, mesh topology, and UV data."""
     # Faces from precomputed numpy file
     faces_path = MHR_ASSETS / "lod1_faces.npy"
     if not faces_path.exists():
@@ -184,28 +270,58 @@ def load_model():
     assert ts_path.exists(), f"TorchScript model not found at {ts_path}"
     scripted_model = torch.jit.load(str(ts_path), map_location="cpu")
     scripted_model.eval()
-    return scripted_model, faces
+
+    # UV data (pre-extracted from FBX)
+    texcoords_path = MHR_ASSETS / "lod1_texcoords.npy"
+    texcoord_faces_path = MHR_ASSETS / "lod1_texcoord_faces.npy"
+    uv_to_mesh_path = MHR_ASSETS / "lod1_uv_to_mesh.npy"
+    if texcoords_path.exists():
+        texcoords = np.load(str(texcoords_path))        # (19455, 2)
+        texcoord_faces = np.load(str(texcoord_faces_path))  # (36874, 3)
+        uv_to_mesh = np.load(str(uv_to_mesh_path))     # (19455,)
+    else:
+        texcoords = None
+        texcoord_faces = None
+        uv_to_mesh = None
+
+    # Skinning data → per-vertex body-region label
+    dominant_joint_path = MHR_ASSETS / "lod1_dominant_joint.npy"
+    joint_names_path = MHR_ASSETS / "lod1_joint_names.npy"
+    if dominant_joint_path.exists():
+        dominant_joint = np.load(str(dominant_joint_path))   # (18439,)
+        joint_names_arr = np.load(str(joint_names_path))     # (127,)
+    else:
+        dominant_joint = None
+        joint_names_arr = None
+
+    return scripted_model, faces, texcoords, texcoord_faces, uv_to_mesh, dominant_joint, joint_names_arr
 
 
-@st.cache_data(show_spinner="Computing mesh …")
-def compute_mesh(
-    _model,  # leading underscore → unhashable arg ignored by st.cache_data
-    identity_tuple: tuple,
-    pose_tuple: tuple,
-    expression_tuple: tuple,
-):
+def compute_mesh(model, identity_tuple, pose_tuple, expression_tuple):
     """Run the MHR forward pass and return vertices (N,3) as numpy."""
     identity = torch.tensor([identity_tuple], dtype=torch.float32)
     pose = torch.tensor([pose_tuple], dtype=torch.float32)
     expression = torch.tensor([expression_tuple], dtype=torch.float32)
     with torch.no_grad():
-        verts, _ = _model(identity, pose, expression)
+        verts, _ = model(identity, pose, expression)
     return verts[0].numpy()
 
 
 # ===================================================================
 # Plotly visualisation helpers
 # ===================================================================
+def _get_region_label(joint_idx: int) -> str:
+    """Return the body-region label for a given joint index."""
+    return JOINT_TO_REGION.get(int(joint_idx), "Unknown")
+
+
+def _build_vertex_region_colors(dominant_joint: np.ndarray) -> tuple[list[str], list[str]]:
+    """Return (region_labels, hex_colors) arrays aligned with vertex indices."""
+    labels = [_get_region_label(j) for j in dominant_joint]
+    colors = [REGION_COLORS.get(lbl, "#888888") for lbl in labels]
+    return labels, colors
+
+
 def build_mesh_figure(
     verts: np.ndarray,
     faces: np.ndarray,
@@ -214,13 +330,22 @@ def build_mesh_figure(
     show_wireframe: bool = False,
     color_mode: str = "height",
     point_size: int = 3,
+    dominant_joint: np.ndarray | None = None,
 ):
     """Build an interactive Plotly 3D figure of the mesh."""
     x, y, z = verts[:, 0], verts[:, 1], verts[:, 2]
     i, j, k = faces[:, 0], faces[:, 1], faces[:, 2]
 
     # ---- colour the mesh ------------------------------------------------
-    if color_mode == "height":
+    use_region_color = (color_mode == "body region" and dominant_joint is not None)
+
+    if use_region_color:
+        region_labels, region_hex = _build_vertex_region_colors(dominant_joint)
+        intensity = None
+        colorscale = None
+        # Mesh3d vertexcolor expects a list of css colour strings
+        vertex_colors = region_hex
+    elif color_mode == "height":
         intensity = z
         colorscale = "Viridis"
     elif color_mode == "depth":
@@ -234,31 +359,40 @@ def build_mesh_figure(
         colorscale = "Cividis"
 
     # Vertex index hover text
-    hover_text = [f"Vertex {idx}<br>x={x[idx]:.2f}  y={y[idx]:.2f}  z={z[idx]:.2f}" for idx in range(len(x))]
+    if use_region_color:
+        hover_text = [
+            f"Vertex {idx}<br>{region_labels[idx]}<br>"
+            f"x={x[idx]:.2f}  y={y[idx]:.2f}  z={z[idx]:.2f}"
+            for idx in range(len(x))
+        ]
+    else:
+        hover_text = [f"Vertex {idx}<br>x={x[idx]:.2f}  y={y[idx]:.2f}  z={z[idx]:.2f}" for idx in range(len(x))]
 
     fig = go.Figure()
 
     # Main mesh
-    fig.add_trace(
-        go.Mesh3d(
-            x=x, y=y, z=z,
-            i=i, j=j, k=k,
-            intensity=intensity,
-            colorscale=colorscale,
-            opacity=0.85,
-            flatshading=True,
-            lighting=dict(
-                ambient=0.5,
-                diffuse=0.7,
-                specular=0.3,
-                roughness=0.4,
-                fresnel=0.2,
-            ),
-            lightposition=dict(x=100, y=200, z=300),
-            hoverinfo="skip",
-            name="mesh",
-        )
+    mesh_kwargs = dict(
+        x=x, y=y, z=z,
+        i=i, j=j, k=k,
+        opacity=0.85,
+        flatshading=True,
+        lighting=dict(
+            ambient=0.5,
+            diffuse=0.7,
+            specular=0.3,
+            roughness=0.4,
+            fresnel=0.2,
+        ),
+        lightposition=dict(x=100, y=200, z=300),
+        hoverinfo="skip",
+        name="mesh",
     )
+    if use_region_color:
+        mesh_kwargs["vertexcolor"] = vertex_colors
+    else:
+        mesh_kwargs["intensity"] = intensity
+        mesh_kwargs["colorscale"] = colorscale
+    fig.add_trace(go.Mesh3d(**mesh_kwargs))
 
     # Wireframe overlay
     if show_wireframe:
@@ -279,7 +413,10 @@ def build_mesh_figure(
         )
 
     # Vertex scatter (always on top for picking)
-    vert_colors = np.full(len(x), "rgba(100,100,255,0.4)", dtype=object)
+    if use_region_color:
+        vert_colors = np.array(region_hex, dtype=object)
+    else:
+        vert_colors = np.full(len(x), "rgba(100,100,255,0.4)", dtype=object)
     vert_sizes = np.full(len(x), point_size, dtype=float)
     if selected_verts:
         for vi in selected_verts:
@@ -329,10 +466,29 @@ def build_mesh_figure(
 
     fig.update_layout(
         scene=dict(
-            xaxis_title="X",
-            yaxis_title="Y",
-            zaxis_title="Z",
+            xaxis=dict(
+                title="X",
+                backgroundcolor="#1e1e1e",
+                gridcolor="#444444",
+                zerolinecolor="#555555",
+                color="#cccccc",
+            ),
+            yaxis=dict(
+                title="Y",
+                backgroundcolor="#1e1e1e",
+                gridcolor="#444444",
+                zerolinecolor="#555555",
+                color="#cccccc",
+            ),
+            zaxis=dict(
+                title="Z",
+                backgroundcolor="#1e1e1e",
+                gridcolor="#444444",
+                zerolinecolor="#555555",
+                color="#cccccc",
+            ),
             aspectmode="data",
+            dragmode="turntable",
             camera=dict(
                 eye=dict(x=0, y=-2.0, z=0.5),
                 up=dict(x=0, y=0, z=1),
@@ -342,7 +498,155 @@ def build_mesh_figure(
         height=750,
         showlegend=False,
         paper_bgcolor="#1e1e1e",
+        plot_bgcolor="#1e1e1e",
         font_color="white",
+    )
+    return fig
+
+
+def build_uv_figure(
+    texcoords: np.ndarray,
+    texcoord_faces: np.ndarray,
+    uv_to_mesh: np.ndarray,
+    selected_verts: set | None = None,
+    point_size: int = 3,
+    dominant_joint: np.ndarray | None = None,
+    color_mode: str = "height",
+):
+    """Build an interactive Plotly 2D figure of the UV layout.
+
+    This is a flat (U, V) scatter + wireframe that supports box/lasso
+    selection in Plotly 2D mode.  Selected UV vertices are mapped back to
+    mesh vertex indices through *uv_to_mesh*.
+    """
+    u = texcoords[:, 0]
+    v = texcoords[:, 1]
+
+    use_region_color = (color_mode == "body region" and dominant_joint is not None)
+
+    # Pre-compute region colours per UV vertex (via uv_to_mesh → dominant_joint)
+    if use_region_color:
+        mesh_region_labels, mesh_region_hex = _build_vertex_region_colors(dominant_joint)
+        uv_region_labels = [mesh_region_labels[uv_to_mesh[i]] for i in range(len(u))]
+        uv_region_hex = [mesh_region_hex[uv_to_mesh[i]] for i in range(len(u))]
+
+    # Build the set of UV indices that correspond to the selected mesh verts
+    # (reverse lookup: mesh_vert -> UV verts)
+    selected_uv_set: set[int] = set()
+    if selected_verts:
+        from collections import defaultdict
+        mesh_to_uv: dict[int, list[int]] = defaultdict(list)
+        for uv_idx, mesh_idx in enumerate(uv_to_mesh):
+            mesh_to_uv[int(mesh_idx)].append(uv_idx)
+        for mv in selected_verts:
+            selected_uv_set.update(mesh_to_uv.get(mv, []))
+
+    fig = go.Figure()
+
+    # ---- Wireframe edges (triangle outlines) --------------------------
+    if use_region_color:
+        # Group edges by body region so the wireframe is colour-coded
+        region_edges: dict[str, tuple[list, list]] = {r: ([], []) for r in REGION_COLORS}
+        for face in texcoord_faces:
+            # Determine region from first vertex of the face
+            mesh_vi = uv_to_mesh[face[0]]
+            region = _get_region_label(dominant_joint[mesh_vi])
+            eu, ev = region_edges.get(region, ([], []))
+            for s, e in [(0, 1), (1, 2), (2, 0)]:
+                eu += [float(u[face[s]]), float(u[face[e]]), None]
+                ev += [float(v[face[s]]), float(v[face[e]]), None]
+        for region, (eu, ev) in region_edges.items():
+            if eu:
+                fig.add_trace(
+                    go.Scattergl(
+                        x=eu, y=ev,
+                        mode="lines",
+                        line=dict(color=REGION_COLORS[region], width=0.7),
+                        hoverinfo="skip",
+                        name=f"uv_{region}",
+                    )
+                )
+    else:
+        edge_u: list[float | None] = []
+        edge_v: list[float | None] = []
+        for face in texcoord_faces:
+            for s, e in [(0, 1), (1, 2), (2, 0)]:
+                edge_u += [float(u[face[s]]), float(u[face[e]]), None]
+                edge_v += [float(v[face[s]]), float(v[face[e]]), None]
+        fig.add_trace(
+            go.Scattergl(
+                x=edge_u, y=edge_v,
+                mode="lines",
+                line=dict(color="rgba(100,100,255,0.25)", width=0.5),
+                hoverinfo="skip",
+                name="uv_wireframe",
+            )
+        )
+
+    # ---- Vertex scatter -----------------------------------------------
+    if use_region_color:
+        hover_text = [
+            f"UV {idx}  →  Mesh v{uv_to_mesh[idx]}<br>{uv_region_labels[idx]}<br>"
+            f"u={u[idx]:.4f}  v={v[idx]:.4f}"
+            for idx in range(len(u))
+        ]
+    else:
+        hover_text = [
+            f"UV {idx}  →  Mesh v{uv_to_mesh[idx]}<br>u={u[idx]:.4f}  v={v[idx]:.4f}"
+            for idx in range(len(u))
+        ]
+
+    if use_region_color:
+        vert_colors = np.array(uv_region_hex, dtype=object)
+    else:
+        vert_colors = np.full(len(u), "rgba(100,100,255,0.5)", dtype=object)
+    vert_sizes = np.full(len(u), point_size, dtype=float)
+    if selected_uv_set:
+        for ui in selected_uv_set:
+            if 0 <= ui < len(u):
+                vert_colors[ui] = "rgba(255,50,50,1.0)"
+                vert_sizes[ui] = point_size + 4
+
+    fig.add_trace(
+        go.Scattergl(
+            x=u, y=v,
+            mode="markers",
+            marker=dict(
+                size=vert_sizes,
+                color=vert_colors.tolist(),
+            ),
+            text=hover_text,
+            hoverinfo="text",
+            name="uv_vertices",
+            # customdata carries the *mesh* vertex index for each UV point
+            customdata=uv_to_mesh.tolist(),
+        )
+    )
+
+    fig.update_layout(
+        xaxis=dict(
+            title="U",
+            range=[-0.02, 1.02],
+            scaleanchor="y",
+            scaleratio=1,
+            gridcolor="#333333",
+            zerolinecolor="#555555",
+            color="#cccccc",
+        ),
+        yaxis=dict(
+            title="V",
+            range=[-0.02, 1.02],
+            gridcolor="#333333",
+            zerolinecolor="#555555",
+            color="#cccccc",
+        ),
+        margin=dict(l=0, r=0, t=30, b=0),
+        height=750,
+        showlegend=False,
+        paper_bgcolor="#1e1e1e",
+        plot_bgcolor="#1e1e1e",
+        font_color="white",
+        dragmode="lasso",  # default to lasso for easy selection
     )
     return fig
 
@@ -454,7 +758,7 @@ def main():
     )
 
     # Load model
-    model, faces = load_model()
+    model, faces, texcoords, texcoord_faces, uv_to_mesh, dominant_joint, joint_names_arr = load_model()
 
     # Sidebar → parameter arrays
     identity, pose, expression = sidebar_controls()
@@ -464,19 +768,32 @@ def main():
     with opt_col1:
         show_wireframe = st.checkbox("Show wireframe", value=False)
     with opt_col2:
-        color_mode = st.selectbox("Color by", ["height", "depth", "x-axis", "distance"], index=0)
+        color_options = ["height", "depth", "x-axis", "distance"]
+        if dominant_joint is not None:
+            color_options.insert(0, "body region")
+        color_mode = st.selectbox("Color by", color_options, index=0)
     with opt_col3:
-        point_size = st.slider("Vertex point size", 1, 10, 3)
+        point_size = st.slider("Vertex point size",0.0, 5.0, 1.0, step=0.25)
     with opt_col4:
         st.metric("Vertices", f"{faces.max() + 1:,}")
 
-    # Compute mesh
-    verts = compute_mesh(
-        model,
+    # ------------------------------------------------------------------
+    # Compute mesh – stored in session_state, recomputed when params change
+    # ------------------------------------------------------------------
+    current_params = (
         tuple(identity.tolist()),
         tuple(pose.tolist()),
         tuple(expression.tolist()),
     )
+
+    if (
+        "mesh_verts" not in st.session_state
+        or st.session_state.get("_last_params") != current_params
+    ):
+        st.session_state.mesh_verts = compute_mesh(model, *current_params)
+        st.session_state._last_params = current_params
+
+    verts = st.session_state.mesh_verts
 
     # ------------------------------------------------------------------
     # Selection state
@@ -541,7 +858,24 @@ def main():
             st.rerun()
 
     # ------------------------------------------------------------------
-    # 3D plot
+    # Interaction mode toggle
+    # ------------------------------------------------------------------
+    mode_col1, mode_col2 = st.columns([1, 4])
+    with mode_col1:
+        interaction_mode = st.radio(
+            "Interaction mode",
+            ["🔄 Navigate", "🎯 Select"],
+            index=0,
+            horizontal=True,
+            help=(
+                "**Navigate** – drag to rotate, scroll to zoom, shift-drag to pan.\n\n"
+                "**Select** – box/lasso select vertices in the 3D view."
+            ),
+        )
+    select_mode = interaction_mode.startswith("🎯")
+
+    # ------------------------------------------------------------------
+    # 3D plot + 2D UV map side-by-side
     # ------------------------------------------------------------------
     fig = build_mesh_figure(
         verts,
@@ -551,17 +885,60 @@ def main():
         show_wireframe=show_wireframe,
         color_mode=color_mode,
         point_size=point_size,
+        dominant_joint=dominant_joint,
     )
 
-    # Use plotly_events-style click capture via on_select
-    selected_point = st.plotly_chart(
-        fig,
-        use_container_width=True,
-        key="mesh_plot",
-        on_select="rerun",
-    )
+    has_uv = texcoords is not None
 
-    # Process click selection from plotly
+    if has_uv:
+        plot_col_3d, plot_col_uv = st.columns(2)
+    else:
+        plot_col_3d = st.container()
+
+    # ---- 3D mesh plot ----
+    with plot_col_3d:
+        st.markdown("**3D Mesh View**")
+        # In Navigate mode we do NOT pass on_select so Plotly keeps its native
+        # turntable-rotate / pan / zoom interactions.  In Select mode we enable
+        # on_select so the user can box-select or lasso vertices.
+        if select_mode:
+            selected_point = st.plotly_chart(
+                fig,
+                use_container_width=True,
+                key="mesh_plot_select",
+                on_select="rerun",
+            )
+        else:
+            selected_point = None
+            st.plotly_chart(
+                fig,
+                use_container_width=True,
+                key="mesh_plot_nav",
+                config=dict(scrollZoom=True),
+            )
+
+    # ---- 2D UV map plot (always has lasso/box select) ----
+    uv_selected_point = None
+    if has_uv:
+        with plot_col_uv:
+            st.markdown("**2D UV Map** — *lasso / box-select here to pick vertices*")
+            uv_fig = build_uv_figure(
+                texcoords,
+                texcoord_faces,
+                uv_to_mesh,
+                selected_verts=st.session_state.selected_verts,
+                point_size=point_size,
+                dominant_joint=dominant_joint,
+                color_mode=color_mode,
+            )
+            uv_selected_point = st.plotly_chart(
+                uv_fig,
+                use_container_width=True,
+                key="uv_plot",
+                on_select="rerun",
+            )
+
+    # Process selection from 3D plot (only in Select mode)
     if selected_point and selected_point.selection and selected_point.selection.points:
         points = selected_point.selection.points
         clicked_verts = set()
@@ -574,6 +951,19 @@ def main():
                 clicked_verts.add(pt["point_number"])
         if clicked_verts:
             st.session_state.selected_verts = st.session_state.selected_verts | clicked_verts
+
+    # Process selection from 2D UV plot → map back to mesh vertices
+    if uv_selected_point and uv_selected_point.selection and uv_selected_point.selection.points:
+        uv_points = uv_selected_point.selection.points
+        uv_clicked_mesh_verts = set()
+        for pt in uv_points:
+            if pt.get("customdata") is not None:
+                cd = pt["customdata"]
+                mesh_vi = int(cd[0]) if isinstance(cd, list) else int(cd)
+                if mesh_vi >= 0:
+                    uv_clicked_mesh_verts.add(mesh_vi)
+        if uv_clicked_mesh_verts:
+            st.session_state.selected_verts = st.session_state.selected_verts | uv_clicked_mesh_verts
 
     # ------------------------------------------------------------------
     # Selection info panel
