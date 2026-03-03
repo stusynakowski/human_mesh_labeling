@@ -23,13 +23,28 @@ import plotly.graph_objects as go
 import torch
 
 # ---------------------------------------------------------------------------
-# Resolve MHR repo that sits next to this repo
+# Asset resolution: local assets/ dir first, then sibling MHR repo
 # ---------------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).resolve().parent
-MHR_REPO = SCRIPT_DIR.parent.parent / "MHR"  # ../MHR relative to the workspace
-MHR_ASSETS = MHR_REPO / "assets"
+LOCAL_ASSETS = SCRIPT_DIR / "assets"          # shipped with this repo
+MHR_REPO = SCRIPT_DIR.parent.parent / "MHR"   # ../MHR relative to the workspace
+MHR_ASSETS = MHR_REPO / "assets"               # fallback for large files
 SELECTIONS_DIR = SCRIPT_DIR / "selections"
 SELECTIONS_DIR.mkdir(exist_ok=True)
+
+
+def _find_asset(name: str) -> Path:
+    """Return the path to *name*, preferring LOCAL_ASSETS over MHR_ASSETS."""
+    local = LOCAL_ASSETS / name
+    if local.exists():
+        return local
+    remote = MHR_ASSETS / name
+    if remote.exists():
+        return remote
+    raise FileNotFoundError(
+        f"Asset '{name}' not found in {LOCAL_ASSETS} or {MHR_ASSETS}.\n"
+        f"If you haven't cloned the MHR repo, place the file in {LOCAL_ASSETS}."
+    )
 
 # ---------------------------------------------------------------------------
 # Page config (must be first Streamlit call)
@@ -254,49 +269,34 @@ ALL_REGIONS = list(REGION_COLORS.keys())
 # ===================================================================
 @st.cache_resource(show_spinner="Loading MHR model …")
 def load_model():
-    """Load the TorchScript model, mesh topology, and UV data."""
-    # Faces from precomputed numpy file
-    faces_path = MHR_ASSETS / "lod1_faces.npy"
-    if not faces_path.exists():
-        # Fallback: load from FBX via pymomentum
-        import pymomentum.geometry as pym_geometry
-        fbx_path = str(MHR_ASSETS / "lod1.fbx")
-        model_path = str(MHR_ASSETS / "compact_v6_1.model")
-        character = pym_geometry.Character.load_fbx(
-            fbx_path, model_path, load_blendshapes=True
-        )
-        faces = character.mesh.faces.copy()
-    else:
-        faces = np.load(str(faces_path))
+    """Load the TorchScript model, mesh topology, and UV data.
 
-    # TorchScript model
-    ts_path = MHR_ASSETS / "mhr_model.pt"
-    assert ts_path.exists(), f"TorchScript model not found at {ts_path}"
+    Asset resolution order:
+      1.  mhr_viewer/assets/   (shipped with this repo — .npy files)
+      2.  ../../MHR/assets/    (sibling MHR repo — needed for mhr_model.pt)
+    """
+    # Faces
+    faces = np.load(str(_find_asset("lod1_faces.npy")))
+
+    # TorchScript model (664 MB — lives in MHR repo or via Git LFS)
+    ts_path = _find_asset("mhr_model.pt")
     scripted_model = torch.jit.load(str(ts_path), map_location="cpu")
     scripted_model.eval()
 
-    # UV data (pre-extracted from FBX)
-    texcoords_path = MHR_ASSETS / "lod1_texcoords.npy"
-    texcoord_faces_path = MHR_ASSETS / "lod1_texcoord_faces.npy"
-    uv_to_mesh_path = MHR_ASSETS / "lod1_uv_to_mesh.npy"
-    if texcoords_path.exists():
-        texcoords = np.load(str(texcoords_path))        # (19455, 2)
-        texcoord_faces = np.load(str(texcoord_faces_path))  # (36874, 3)
-        uv_to_mesh = np.load(str(uv_to_mesh_path))     # (19455,)
-    else:
-        texcoords = None
-        texcoord_faces = None
-        uv_to_mesh = None
+    # UV data
+    try:
+        texcoords = np.load(str(_find_asset("lod1_texcoords.npy")))          # (19455, 2)
+        texcoord_faces = np.load(str(_find_asset("lod1_texcoord_faces.npy")))  # (36874, 3)
+        uv_to_mesh = np.load(str(_find_asset("lod1_uv_to_mesh.npy")))       # (19455,)
+    except FileNotFoundError:
+        texcoords = texcoord_faces = uv_to_mesh = None
 
     # Skinning data → per-vertex body-region label
-    dominant_joint_path = MHR_ASSETS / "lod1_dominant_joint.npy"
-    joint_names_path = MHR_ASSETS / "lod1_joint_names.npy"
-    if dominant_joint_path.exists():
-        dominant_joint = np.load(str(dominant_joint_path))   # (18439,)
-        joint_names_arr = np.load(str(joint_names_path))     # (127,)
-    else:
-        dominant_joint = None
-        joint_names_arr = None
+    try:
+        dominant_joint = np.load(str(_find_asset("lod1_dominant_joint.npy")))  # (18439,)
+        joint_names_arr = np.load(str(_find_asset("lod1_joint_names.npy")))   # (127,)
+    except FileNotFoundError:
+        dominant_joint = joint_names_arr = None
 
     return scripted_model, faces, texcoords, texcoord_faces, uv_to_mesh, dominant_joint, joint_names_arr
 

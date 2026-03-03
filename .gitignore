@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.streamlit/
+*.egg-info/
+dist/
+build/
+
+# Large model file — not tracked in regular git.
+# Either use Git LFS or place mhr_model.pt in mhr_viewer/assets/ manually.
+mhr_viewer/assets/mhr_model.pt
